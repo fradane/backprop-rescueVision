@@ -1,0 +1,168 @@
+import depthai as dai
+from depthai_nodes.node import ApplyColormap as ApplyDepthColormap, FrameCropper, ParsingNeuralNetwork, GatherData
+
+from utils.arguments import initialize_argparser
+from utils.annotation_node import AnnotationNode
+from utils.fall_annotation_node import FallAnnotationNode
+
+_, args = initialize_argparser()
+
+visualizer = dai.RemoteConnection(httpPort=8082)
+device = dai.Device(dai.DeviceInfo(args.device)) if args.device else dai.Device()
+platform = device.getPlatform().name
+print(f"Platform: {platform}")
+
+frame_type = (
+    dai.ImgFrame.Type.BGR888p if platform == "RVC2" else dai.ImgFrame.Type.BGR888i
+)
+
+if args.fps_limit is None:
+    args.fps_limit = 20 if platform == "RVC2" else 30
+    print(
+        f"\nFPS limit set to {args.fps_limit} for {platform} platform. If you want to set a custom FPS limit, use the --fps_limit flag.\n"
+    )
+
+available_cameras = device.getConnectedCameras()
+if len(available_cameras) < 3:
+    raise ValueError(
+        "Device must have 3 cameras (color, left and right) in order to run this example."
+    )
+
+with dai.Pipeline(device) as pipeline:
+    print("Creating pipeline...")
+
+    # detection model (person)
+    det_model_nn_archive = dai.NNArchive("best.rvc4.tar.xz")
+    classes = ["person"]
+    nn_size = det_model_nn_archive.getInputSize()
+
+    # fall detection model
+    fall_model_nn_archive = dai.NNArchive("best_fall_detection_model.rvc4.tar.xz")
+    fall_classes = [c.strip() for c in args.fall_classes.split(",")]
+
+    # re-ID model
+    reid_model_description = dai.NNModelDescription.fromYamlFile(
+        f"osnet_imagenet.{platform}.yaml"
+    )
+    reid_nn_archive = dai.NNArchive(dai.getModelFromZoo(reid_model_description))
+
+    # camera input
+    cam = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+
+    left_cam = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+    right_cam = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+    stereo = pipeline.create(dai.node.StereoDepth).build(
+        left=left_cam.requestOutput(nn_size, fps=args.fps_limit),
+        right=right_cam.requestOutput(nn_size, fps=args.fps_limit),
+        presetMode=dai.node.StereoDepth.PresetMode.HIGH_DETAIL,
+    )
+    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+    if platform == "RVC2":
+        stereo.setOutputSize(*nn_size)
+    stereo.setLeftRightCheck(True)
+    stereo.setRectification(True)
+
+    nn = pipeline.create(dai.node.SpatialDetectionNetwork).build(
+        input=cam,
+        stereo=stereo,
+        nnArchive=det_model_nn_archive,
+        fps=float(args.fps_limit),
+    )
+    if platform == "RVC2":
+        nn.setNNArchive(det_model_nn_archive, numShaves=7)
+    nn.setBoundingBoxScaleFactor(0.7)
+
+    # fall detection network (runs in parallel, shares camera and stereo)
+    fall_nn = pipeline.create(dai.node.SpatialDetectionNetwork).build(
+        input=cam,
+        stereo=stereo,
+        nnArchive=fall_model_nn_archive,
+        fps=float(args.fps_limit),
+    )
+    if platform == "RVC2":
+        fall_nn.setNNArchive(fall_model_nn_archive, numShaves=6)
+    fall_nn.setBoundingBoxScaleFactor(0.7)
+
+    fall_annotation_node = pipeline.create(FallAnnotationNode).build(
+        input_detections=fall_nn.out,
+        labels=fall_classes,
+    )
+
+    # tracking (person model)
+    tracker = pipeline.create(dai.node.ObjectTracker)
+    tracker.setDetectionLabelsToTrack([0])
+    tracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
+    tracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.UNIQUE_ID)
+    tracker.setTrackerThreshold(0.4)
+    nn.passthrough.link(tracker.inputTrackerFrame)
+    nn.passthrough.link(tracker.inputDetectionFrame)
+    nn.out.link(tracker.inputDetections)
+
+    # re-ID: crop ogni persona e ne estrae l'embedding visivo con osnet
+    crop_node = (
+        pipeline.create(FrameCropper)
+        .fromImgDetections(
+            inputImgDetections=nn.out,
+            outputSize=(reid_nn_archive.getInputWidth(), reid_nn_archive.getInputHeight()),
+        )
+        .build(inputImage=nn.passthrough)
+    )
+    reid_nn = pipeline.create(ParsingNeuralNetwork).build(crop_node.out, reid_nn_archive)
+
+    # sincronizza spatial detections + embeddings re-ID
+    gather = pipeline.create(GatherData).build(
+        cameraFps=args.fps_limit,
+        inputData=reid_nn.out,
+        inputReference=nn.out,
+    )
+
+    # annotation
+    annotation_node = pipeline.create(AnnotationNode).build(
+        input_gathered=gather.out, depth=stereo.depth, labels=classes
+    )
+
+    apply_colormap = pipeline.create(ApplyDepthColormap).build(stereo.depth)
+
+    # video encoding
+    cam_nv12 = cam.requestOutput(
+        size=nn_size,
+        fps=args.fps_limit,
+        type=dai.ImgFrame.Type.NV12,
+    )
+    video_encoder = pipeline.create(dai.node.VideoEncoder)
+    video_encoder.setMaxOutputFrameSize(nn_size[0] * nn_size[1] * 3)
+    video_encoder.setDefaultProfilePreset(
+        args.fps_limit, dai.VideoEncoderProperties.Profile.H264_MAIN
+    )
+    cam_nv12.link(video_encoder.input)
+
+    # depth colormap encoding
+    depth_encoder_manip = pipeline.create(dai.node.ImageManip)
+    depth_encoder_manip.setMaxOutputFrameSize(nn_size[0] * nn_size[1] * 3)
+    depth_encoder_manip.initialConfig.setOutputSize(*nn_size)
+    depth_encoder_manip.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
+    apply_colormap.out.link(depth_encoder_manip.inputImage)
+
+    depth_encoder = pipeline.create(dai.node.VideoEncoder)
+    depth_encoder.setMaxOutputFrameSize(nn_size[0] * nn_size[1] * 3)
+    depth_encoder.setDefaultProfilePreset(
+        args.fps_limit, dai.VideoEncoderProperties.Profile.H264_MAIN
+    )
+    depth_encoder_manip.out.link(depth_encoder.input)
+
+    # visualization
+    visualizer.addTopic("Camera", video_encoder.out)
+    visualizer.addTopic("Detections", annotation_node.out_annotations)
+    visualizer.addTopic("Fall Detections", fall_annotation_node.out_annotations)
+    visualizer.addTopic("Depth", depth_encoder.out)
+
+    print("Pipeline created.")
+
+    pipeline.start()
+    visualizer.registerPipeline(pipeline)
+
+    while pipeline.isRunning():
+        key = visualizer.waitKey(1)
+        if key == ord("q"):
+            print("Got q key. Exiting...")
+            break

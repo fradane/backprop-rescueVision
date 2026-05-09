@@ -1,0 +1,16 @@
+yolov6_nano_r2_coco.RVC4.yaml:
+  hash: a26d1eee8dd89aaa68faf9912e46ddee
+  model_id: aim_RFFiRGVUcFAVE894kxRbRm
+  model_version_id: aimv_He32P9Hf4x3ug9dhU3agBa
+  model_instance_id: aimi_V76LXDKoqBJQktFW9FULsa
+  downloaded_files:
+    - yolov6n-r2-288x512.rvc4.tar.xz
+  folder_name: f921dd9cf02bd671337d7396b6846ba5f190c4d1
+osnet_imagenet.RVC4.yaml:
+  hash: ab8ad26b3e2bfbaa3fefa15494adee17
+  model_id: aim_56shrgyoKdoJrz1Wu8qKWV
+  model_version_id: aimv_C75QMZFdL6fsJyk9zQ8Yr1
+  model_instance_id: aimi_Jqi6SQSoZk2jnEKWNBYVVL
+  downloaded_files:
+    - osnet-x1-0_imagenet_128x256.rvc4.tar.xz
+  folder_name: 3e9e76579e0630de87715e256d10fc63ac6aef75
