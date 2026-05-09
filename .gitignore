@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ML model weights
+*.pth
+*.pkl
+*.ckpt
+*.h5
+
+# Data
+*.csv
+data/
+datasets/
