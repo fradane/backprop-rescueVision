@@ -34,14 +34,6 @@ def initialize_argparser():
         type=int,
     )
 
-    parser.add_argument(
-        "--fall_classes",
-        help="Comma-separated class names for the fall detection model.",
-        required=False,
-        default="fall",
-        type=str,
-    )
-
     args = parser.parse_args()
 
     return parser, args

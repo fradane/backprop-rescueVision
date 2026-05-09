@@ -3,11 +3,13 @@ import time
 import numpy as np
 from typing import Optional
 
-MOVE_THRESHOLD_MM = 150  # mm - sotto = "ferma"
-STILL_SECONDS = 5        # secondi per alert immobilità
-REID_THRESHOLD_MM = 500  # mm - distanza entro cui cercare match
-LOST_TIMEOUT_S = 30      # secondi - dopo quanto eliminare una persona persa
-CSIM_THRESHOLD = 0.8     # soglia similarità coseno osnet
+MOVE_THRESHOLD_MM = 150   # mm - sotto = inizia a contare immobilità
+BREAK_THRESHOLD_MM = 250  # mm - sopra = rompe l'immobilità (hysteresis)
+STILL_SECONDS = 5         # secondi per alert immobilità
+REID_THRESHOLD_MM = 500   # mm - distanza entro cui cercare match
+LOST_TIMEOUT_S = 30       # secondi - dopo quanto eliminare una persona persa
+CSIM_THRESHOLD = 0.8      # soglia similarità coseno osnet
+EMA_ALPHA = 0.3           # peso del frame corrente nell'EMA (0=max smooth, 1=no smooth)
 
 _track_history = {}
 
@@ -61,9 +63,11 @@ def check_stillness(track_id: str, x: float, y: float, z: float, embedding: Opti
     if track_id not in _track_history:
         _track_history[track_id] = {
             "x": x, "y": y, "z": z,
+            "sx": x, "sy": y, "sz": z,  # posizione smoothed (EMA)
             "last_move_time": now,
             "last_seen": now,
             "lost": False,
+            "is_still": False,
             "embedding": embedding,
         }
         return False, 0.0
@@ -74,15 +78,29 @@ def check_stillness(track_id: str, x: float, y: float, z: float, embedding: Opti
     if embedding is not None:
         prev["embedding"] = embedding
 
-    dist = math.sqrt((x - prev["x"]) ** 2 + (y - prev["y"]) ** 2 + (z - prev["z"]) ** 2)
+    # aggiorna EMA
+    prev["sx"] = EMA_ALPHA * x + (1 - EMA_ALPHA) * prev["sx"]
+    prev["sy"] = EMA_ALPHA * y + (1 - EMA_ALPHA) * prev["sy"]
+    prev["sz"] = EMA_ALPHA * z + (1 - EMA_ALPHA) * prev["sz"]
 
-    if dist > MOVE_THRESHOLD_MM:
-        prev["x"], prev["y"], prev["z"] = x, y, z
+    dist = math.sqrt(
+        (prev["sx"] - prev["x"]) ** 2 +
+        (prev["sy"] - prev["y"]) ** 2 +
+        (prev["sz"] - prev["z"]) ** 2
+    )
+
+    # threshold dipende dallo stato corrente (hysteresis)
+    threshold = BREAK_THRESHOLD_MM if prev["is_still"] else MOVE_THRESHOLD_MM
+
+    if dist > threshold:
+        prev["x"], prev["y"], prev["z"] = prev["sx"], prev["sy"], prev["sz"]
         prev["last_move_time"] = now
+        prev["is_still"] = False
         return False, 0.0
     else:
         still_duration = now - prev["last_move_time"]
-        return still_duration >= STILL_SECONDS, still_duration
+        prev["is_still"] = still_duration >= STILL_SECONDS
+        return prev["is_still"], still_duration
 
 
 def cleanup_tracks(active_ids: set):

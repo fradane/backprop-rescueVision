@@ -10,6 +10,14 @@ from utils.stillness import check_stillness, cleanup_tracks, resolve_track_id
 GPS_LAT = 44.4056
 GPS_LON = 8.9463
 
+# aspect ratio width/height sopra cui la persona è considerata caduta
+FALL_ASPECT_RATIO = 1.3
+
+COLOR_NORMAL   = PRIMARY_COLOR
+COLOR_FALLEN   = (1.0, 0.5, 0.0, 1.0)   # arancione
+COLOR_STILL    = (1.0, 0.0, 0.0, 1.0)   # rosso
+COLOR_FALLEN_STILL = (0.8, 0.0, 0.8, 1.0)  # viola — caduto + immobile
+
 _next_id = 0
 _embedding_db = {}  # stable_id -> embedding
 CSIM_THRESHOLD = 0.8
@@ -33,8 +41,9 @@ def _assign_id(embedding: np.ndarray) -> str:
     if best_id is None:
         best_id = str(_next_id)
         _next_id += 1
-
-    _embedding_db[best_id] = embedding
+        _embedding_db[best_id] = embedding
+    else:
+        _embedding_db[best_id] = 0.8 * _embedding_db[best_id] + 0.2 * embedding
     return best_id
 
 
@@ -91,13 +100,26 @@ class AnnotationNode(dai.node.HostNode):
             if embedding is not None:
                 embedding = embedding.flatten()
                 track_id = _assign_id(embedding)
+                track_id = resolve_track_id(track_id, x, y, z, embedding)
             else:
                 track_id = resolve_track_id(f"det_{i}", x, y, z)
 
             active_ids.add(track_id)
             is_still, still_secs = check_stillness(track_id, x, y, z, embedding)
 
-            box_color = (1.0, 0.0, 0.0, 1.0) if is_still else PRIMARY_COLOR
+            box_w = xmax - xmin
+            box_h = ymax - ymin
+            is_fallen = (box_h > 0) and (box_w / box_h) > FALL_ASPECT_RATIO
+
+            if is_fallen and is_still:
+                box_color = COLOR_FALLEN_STILL
+            elif is_fallen:
+                box_color = COLOR_FALLEN
+            elif is_still:
+                box_color = COLOR_STILL
+            else:
+                box_color = COLOR_NORMAL
+
             annotation_helper.draw_rectangle(
                 top_left=(xmin, ymin),
                 bottom_right=(xmax, ymax),
@@ -106,10 +128,16 @@ class AnnotationNode(dai.node.HostNode):
                 thickness=2.0,
             )
 
-            status = f"IMMOBILE {still_secs:.0f}s" if is_still else "in movimento"
-            confidence = int(detection.confidence * 100)
+            parts = [f"person #{track_id} {int(detection.confidence * 100)}%"]
+            if is_fallen:
+                parts.append("CADUTO")
+            if is_still:
+                parts.append(f"IMMOBILE {still_secs:.0f}s")
+            parts.append(f"dist: {z/1000:.1f}m")
+            parts.append(f"lat: {GPS_LAT:.6f}  lon: {GPS_LON:.6f}")
+
             annotation_helper.draw_text(
-                text=f"person #{track_id} {confidence}%\n{status}\ndist: {z/1000:.1f}m\nlat: {GPS_LAT:.6f}\nlon: {GPS_LON:.6f}",
+                text="\n".join(parts),
                 position=(xmin + 0.01, ymin + 0.2),
                 size=12,
                 color=box_color,

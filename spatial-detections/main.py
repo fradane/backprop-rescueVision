@@ -3,7 +3,6 @@ from depthai_nodes.node import ApplyColormap as ApplyDepthColormap, FrameCropper
 
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
-from utils.fall_annotation_node import FallAnnotationNode
 
 _, args = initialize_argparser()
 
@@ -36,10 +35,6 @@ with dai.Pipeline(device) as pipeline:
     classes = ["person"]
     nn_size = det_model_nn_archive.getInputSize()
 
-    # fall detection model
-    fall_model_nn_archive = dai.NNArchive("best_fall_detection_model.rvc4.tar.xz")
-    fall_classes = [c.strip() for c in args.fall_classes.split(",")]
-
     # re-ID model
     reid_model_description = dai.NNModelDescription.fromYamlFile(
         f"osnet_imagenet.{platform}.yaml"
@@ -71,22 +66,6 @@ with dai.Pipeline(device) as pipeline:
     if platform == "RVC2":
         nn.setNNArchive(det_model_nn_archive, numShaves=7)
     nn.setBoundingBoxScaleFactor(0.7)
-
-    # fall detection network (runs in parallel, shares camera and stereo)
-    fall_nn = pipeline.create(dai.node.SpatialDetectionNetwork).build(
-        input=cam,
-        stereo=stereo,
-        nnArchive=fall_model_nn_archive,
-        fps=float(args.fps_limit),
-    )
-    if platform == "RVC2":
-        fall_nn.setNNArchive(fall_model_nn_archive, numShaves=6)
-    fall_nn.setBoundingBoxScaleFactor(0.7)
-
-    fall_annotation_node = pipeline.create(FallAnnotationNode).build(
-        input_detections=fall_nn.out,
-        labels=fall_classes,
-    )
 
     # tracking (person model)
     tracker = pipeline.create(dai.node.ObjectTracker)
@@ -153,7 +132,6 @@ with dai.Pipeline(device) as pipeline:
     # visualization
     visualizer.addTopic("Camera", video_encoder.out)
     visualizer.addTopic("Detections", annotation_node.out_annotations)
-    visualizer.addTopic("Fall Detections", fall_annotation_node.out_annotations)
     visualizer.addTopic("Depth", depth_encoder.out)
 
     print("Pipeline created.")
