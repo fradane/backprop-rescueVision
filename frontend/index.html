@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OAK 4D SAR — Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<style>
+  /* ── Reset & Variables ─────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #050a0e;
+    --bg2:        #080f15;
+    --bg3:        #0c1620;
+    --panel:      #0d1b2a;
+    --border:     #1a3a52;
+    --border2:    #0f2a3f;
+    --green:      #00e5a0;
+    --green-dim:  #00a870;
+    --green-glow: rgba(0, 229, 160, 0.15);
+    --amber:      #ffb300;
+    --amber-dim:  #cc8800;
+    --red:        #ff3d3d;
+    --red-dim:    #cc1a1a;
+    --red-glow:   rgba(255, 61, 61, 0.18);
+    --text:       #c8dce8;
+    --text-dim:   #5a7a8a;
+    --text-muted: #2a4a5a;
+    --accent:     #00b4d8;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+  }
+
+  /* ── Scanline + Grid Background ────────────────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,180,216,0.015) 2px, rgba(0,180,216,0.015) 4px),
+      repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(0,180,216,0.02) 40px, rgba(0,180,216,0.02) 41px),
+      repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(0,180,216,0.02) 40px, rgba(0,180,216,0.02) 41px);
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,180,216,0.06) 0%, transparent 70%);
+    animation: sweep 8s ease-in-out infinite alternate;
+  }
+  @keyframes sweep {
+    from { opacity: 0.4; transform: scaleX(0.9); }
+    to   { opacity: 1;   transform: scaleX(1.05); }
+  }
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  #app {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-rows: 56px auto auto 1fr;
+    height: 100vh;
+    padding: 0;
+    gap: 0;
+  }
+
+  /* ── Top Bar ─────────────────────────────────────────────────────────────── */
+  #topbar {
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 28px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 0 rgba(0,180,216,0.08), 0 4px 24px rgba(0,0,0,0.5);
+    position: relative;
+  }
+  #topbar::after {
+    content: '';
+    position: absolute; bottom: -1px; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.4;
+  }
+
+  .logo {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: 0.12em;
+    color: #fff;
+    text-shadow: 0 0 20px rgba(0,180,216,0.6);
+    white-space: nowrap;
+  }
+  .logo span { color: var(--accent); }
+
+  .logo-sub {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-left: 2px;
+    margin-top: 2px;
+  }
+
+  .topbar-divider {
+    width: 1px; height: 28px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+
+  .mission-id {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+  .mission-id b { color: var(--amber); font-weight: 400; }
+
+  #ws-status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin-left: auto;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 8px var(--red);
+    transition: background 0.4s, box-shadow 0.4s;
+  }
+  .dot.online {
+    background: var(--green);
+    box-shadow: 0 0 10px var(--green);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 6px var(--green); }
+    50%       { box-shadow: 0 0 16px var(--green), 0 0 30px rgba(0,229,160,0.3); }
+  }
+  #ws-label { color: var(--text-dim); }
+
+  #btn-reset {
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 7px 16px;
+    background: transparent;
+    border: 1px solid var(--red-dim);
+    color: var(--red);
+    cursor: pointer;
+    transition: all 0.2s;
+    clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
+  }
+  #btn-reset:hover {
+    background: rgba(255,61,61,0.12);
+    border-color: var(--red);
+    box-shadow: 0 0 16px var(--red-glow);
+  }
+  #btn-reset:active { transform: scale(0.97); }
+
+  /* ── Summary Cards ───────────────────────────────────────────────────────── */
+  #cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .card {
+    padding: 18px 28px;
+    background: var(--panel);
+    border-right: 1px solid var(--border2);
+    position: relative;
+    transition: background 0.3s;
+  }
+  .card:last-child { border-right: none; }
+  .card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--accent);
+    opacity: 0.2;
+    transition: opacity 0.3s;
+  }
+  .card:first-child::before { background: var(--green); opacity: 0.35; }
+  .card:nth-child(2)::before { background: var(--amber); opacity: 0.2; }
+
+  .card-label {
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .card-value {
+    font-family: 'Orbitron', monospace;
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    transition: color 0.3s, text-shadow 0.3s;
+  }
+  .card-value.green  { color: var(--green);  text-shadow: 0 0 20px rgba(0,229,160,0.4); }
+  .card-value.amber  { color: var(--amber);  text-shadow: 0 0 20px rgba(255,179,0,0.4); }
+  .card-value.red    { color: var(--red);    text-shadow: 0 0 20px rgba(255,61,61,0.5); }
+  .card-unit {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    letter-spacing: 0.06em;
+  }
+
+  .card-value.bump {
+    animation: bump 0.35s ease-out;
+  }
+  @keyframes bump {
+    0%  { transform: scale(1); }
+    40% { transform: scale(1.12); }
+    100%{ transform: scale(1); }
+  }
+
+  /* ── Alert Banner ────────────────────────────────────────────────────────── */
+  #alert-banner {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 28px;
+    background: linear-gradient(90deg, rgba(255,61,61,0.18), rgba(255,90,0,0.1));
+    border-bottom: 1px solid rgba(255,61,61,0.4);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #ff8080;
+    animation: alert-pulse 1.4s ease-in-out infinite;
+  }
+  #alert-banner.visible { display: flex; }
+  @keyframes alert-pulse {
+    0%, 100% { background: linear-gradient(90deg, rgba(255,61,61,0.18), rgba(255,90,0,0.08)); }
+    50%       { background: linear-gradient(90deg, rgba(255,61,61,0.28), rgba(255,90,0,0.16)); }
+  }
+  .alert-icon { font-size: 16px; animation: blink 0.8s step-end infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+  #alert-text { font-weight: 400; color: #ffaaaa; }
+  .alert-ids { color: var(--red); font-size: 11px; margin-left: auto; }
+
+  /* ── Live Feed ───────────────────────────────────────────────────────────── */
+  #feed-section {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    background: var(--bg2);
+  }
+
+  #feed-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 28px 10px;
+    border-bottom: 1px solid var(--border2);
+    flex-shrink: 0;
+  }
+  .feed-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .feed-count {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+  }
+  #event-counter {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+  }
+
+  .table-wrap {
+    overflow-y: auto;
+    flex: 1;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .table-wrap::-webkit-scrollbar { width: 4px; }
+  .table-wrap::-webkit-scrollbar-track { background: transparent; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  thead th {
+    position: sticky; top: 0; z-index: 2;
+    padding: 9px 28px;
+    background: var(--bg);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 400;
+    text-align: left;
+    border-bottom: 1px solid var(--border2);
+  }
+  thead th:nth-child(1) { width: 80px; }
+  thead th:nth-child(2) { width: 120px; }
+  thead th:nth-child(3) { width: 120px; }
+  thead th:nth-child(4) { width: 120px; }
+  thead th:nth-child(5) { width: auto; }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border2);
+    transition: background 0.2s;
+    animation: row-in 0.3s ease-out;
+  }
+  tbody tr:hover { background: rgba(0,180,216,0.04); }
+  tbody tr.stationary-row {
+    background: rgba(255,61,61,0.06);
+    animation: row-in 0.3s ease-out, row-alert 0.6s ease-out;
+  }
+  tbody tr.stationary-row:hover { background: rgba(255,61,61,0.1); }
+
+  @keyframes row-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes row-alert {
+    0%  { box-shadow: inset 0 0 0 1px rgba(255,61,61,0); }
+    40% { box-shadow: inset 0 0 0 1px rgba(255,61,61,0.6); }
+    100%{ box-shadow: inset 0 0 0 1px rgba(255,61,61,0); }
+  }
+
+  tbody td {
+    padding: 11px 28px;
+    font-size: 12px;
+    vertical-align: middle;
+  }
+
+  .cell-id {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .cell-dist {
+    font-size: 14px;
+    font-weight: 400;
+    color: #fff;
+  }
+  .cell-dist-unit { font-size: 10px; color: var(--text-dim); }
+
+  .conf-bar-wrap {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .conf-bar-bg {
+    flex: 1; max-width: 60px; height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .conf-bar-fill {
+    height: 100%;
+    background: var(--green);
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+  .conf-val { font-size: 12px; color: var(--text); white-space: nowrap; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    font-weight: 400;
+  }
+  .badge-moving {
+    background: rgba(0,229,160,0.1);
+    color: var(--green-dim);
+    border: 1px solid rgba(0,229,160,0.2);
+  }
+  .badge-stationary {
+    background: rgba(255,61,61,0.18);
+    color: var(--red);
+    border: 1px solid rgba(255,61,61,0.35);
+    animation: badge-pulse 1s ease-in-out infinite;
+  }
+  @keyframes badge-pulse {
+    0%, 100% { box-shadow: none; }
+    50%       { box-shadow: 0 0 8px rgba(255,61,61,0.4); }
+  }
+
+  .cell-time { font-size: 11px; color: var(--text-dim); }
+
+  /* ── Empty State ─────────────────────────────────────────────────────────── */
+  #empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+  .empty-icon {
+    font-size: 36px;
+    opacity: 0.3;
+    animation: spin-slow 8s linear infinite;
+  }
+  @keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .empty-label {
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+  }
+
+  /* ── Corner decoration ───────────────────────────────────────────────────── */
+  .corner-tl, .corner-tr, .corner-bl, .corner-br {
+    position: fixed; z-index: 2;
+    width: 20px; height: 20px;
+    pointer-events: none;
+  }
+  .corner-tl { top: 8px; left: 8px;  border-top: 1px solid var(--accent); border-left:  1px solid var(--accent); opacity: 0.3; }
+  .corner-tr { top: 8px; right: 8px; border-top: 1px solid var(--accent); border-right: 1px solid var(--accent); opacity: 0.3; }
+  .corner-bl { bottom: 8px; left: 8px;  border-bottom: 1px solid var(--accent); border-left:  1px solid var(--accent); opacity: 0.3; }
+  .corner-br { bottom: 8px; right: 8px; border-bottom: 1px solid var(--accent); border-right: 1px solid var(--accent); opacity: 0.3; }
+</style>
+</head>
+<body>
+
+<div class="corner-tl"></div>
+<div class="corner-tr"></div>
+<div class="corner-bl"></div>
+<div class="corner-br"></div>
+
+<div id="app">
+
+  <!-- TOP BAR -->
+  <header id="topbar">
+    <div>
+      <div class="logo">OAK<span> 4D</span> SAR</div>
+      <div class="logo-sub">Search &amp; Rescue — Mission Control</div>
+    </div>
+    <div class="topbar-divider"></div>
+    <div class="mission-id">MISSION <b id="mission-id">——</b></div>
+
+    <div id="ws-status">
+      <div class="dot" id="ws-dot"></div>
+      <span id="ws-label">DISCONNECTED</span>
+    </div>
+
+    <button id="btn-reset">&#9632; Reset Demo</button>
+  </header>
+
+  <!-- SUMMARY CARDS -->
+  <div id="cards">
+    <div class="card">
+      <div class="card-label">Persons Tracked</div>
+      <div class="card-value" id="val-total">—</div>
+      <div class="card-unit">active targets</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Stationary</div>
+      <div class="card-value" id="val-stationary">—</div>
+      <div class="card-unit">possible injury</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Closest Person</div>
+      <div class="card-value" id="val-closest">—</div>
+      <div class="card-unit" id="unit-closest">meters</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last Detection</div>
+      <div class="card-value" id="val-lastts" style="font-size:14px; padding-top:8px; letter-spacing:0.04em">——:——:——</div>
+      <div class="card-unit">UTC</div>
+    </div>
+  </div>
+
+  <!-- ALERT BANNER -->
+  <div id="alert-banner">
+    <span class="alert-icon">⚠</span>
+    <span id="alert-text">STATIONARY PERSON DETECTED — POSSIBLE FALL OR INJURY</span>
+    <span class="alert-ids" id="alert-ids"></span>
+  </div>
+
+  <!-- LIVE FEED -->
+  <section id="feed-section">
+    <div id="feed-header">
+      <span class="feed-title">Live Detection Feed</span>
+      <span class="feed-count" id="feed-count">0 events</span>
+      <span id="event-counter">TOTAL RECEIVED: <b id="total-received">0</b></span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="feed-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Distance</th>
+            <th>Confidence</th>
+            <th>Status</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody id="feed-tbody"></tbody>
+      </table>
+      <div id="empty-state">
+        <div class="empty-icon">◎</div>
+        <div class="empty-label">Awaiting detections…</div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- #app -->
+
+<script>
+/* ── State ─────────────────────────────────────────────────────────────────── */
+const BASE    = 'http://localhost:8000';
+const WS_URL  = 'ws://localhost:8000/ws';
+const MAX_ROWS = 200;
+
+let ws           = null;
+let reconnectTmr = null;
+let totalReceived = 0;
+
+const summary = {
+  total_persons_tracked: 0,
+  stationary_count:      0,
+  stationary_ids:        [],
+  closest_person_m:      null,
+  last_event_ts:         null,
+};
+
+/* ── DOM refs ──────────────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const wsDot       = $('ws-dot');
+const wsLabel     = $('ws-label');
+const valTotal    = $('val-total');
+const valStat     = $('val-stationary');
+const valClosest  = $('val-closest');
+const valLastTs   = $('val-lastts');
+const alertBanner = $('alert-banner');
+const alertText   = $('alert-text');
+const alertIds    = $('alert-ids');
+const feedTbody   = $('feed-tbody');
+const feedCount   = $('feed-count');
+const emptyState  = $('empty-state');
+const totalRecEl  = $('total-received');
+const missionId   = $('mission-id');
+
+/* ── Helpers ───────────────────────────────────────────────────────────────── */
+function fmtTime(isoStr) {
+  if (!isoStr) return '——:——:——';
+  try {
+    const d = new Date(isoStr);
+    return d.toUTCString().split(' ')[4];
+  } catch { return '——:——:——'; }
+}
+
+function animateBump(el) {
+  el.classList.remove('bump');
+  void el.offsetWidth;
+  el.classList.add('bump');
+}
+
+function updateCards() {
+  // Total
+  const prev = valTotal.textContent;
+  valTotal.textContent = summary.total_persons_tracked || '0';
+  if (prev !== valTotal.textContent) {
+    valTotal.className = 'card-value green';
+    animateBump(valTotal);
+  } else { valTotal.className = 'card-value'; }
+
+  // Stationary
+  valStat.textContent = summary.stationary_count || '0';
+  if (summary.stationary_count > 0) {
+    valStat.className = 'card-value red';
+  } else {
+    valStat.className = 'card-value';
+  }
+
+  // Closest
+  if (summary.closest_person_m !== null) {
+    valClosest.textContent = summary.closest_person_m.toFixed(1);
+    valClosest.className = summary.closest_person_m < 3 ? 'card-value amber' : 'card-value green';
+  } else {
+    valClosest.textContent = '—';
+    valClosest.className = 'card-value';
+  }
+
+  // Last TS
+  valLastTs.textContent = fmtTime(summary.last_event_ts);
+
+  // Alert banner
+  if (summary.stationary_count > 0) {
+    alertBanner.classList.add('visible');
+    const n = summary.stationary_count;
+    alertText.textContent = `${n} STATIONARY PERSON${n > 1 ? 'S' : ''} DETECTED — POSSIBLE FALL OR INJURY`;
+    alertIds.textContent = 'IDs: ' + summary.stationary_ids.join(', ');
+  } else {
+    alertBanner.classList.remove('visible');
+  }
+}
+
+function buildRow(evt) {
+  const tr = document.createElement('tr');
+  if (evt.stationary) tr.classList.add('stationary-row');
+
+  const confPct = Math.round((evt.confidence || 0) * 100);
+  const confColor = confPct >= 80 ? 'var(--green)' : confPct >= 50 ? 'var(--amber)' : 'var(--red)';
+
+  tr.innerHTML = `
+    <td><span class="cell-id">#${String(evt.person_id).padStart(3,'0')}</span></td>
+    <td><span class="cell-dist">${evt.distance_m.toFixed(2)}</span> <span class="cell-dist-unit">m</span></td>
+    <td>
+      <div class="conf-bar-wrap">
+        <div class="conf-bar-bg">
+          <div class="conf-bar-fill" style="width:${confPct}%;background:${confColor}"></div>
+        </div>
+        <span class="conf-val">${confPct}%</span>
+      </div>
+    </td>
+    <td>${evt.stationary
+      ? '<span class="badge badge-stationary">Stationary</span>'
+      : '<span class="badge badge-moving">Moving</span>'}</td>
+    <td class="cell-time">${fmtTime(evt.timestamp)}</td>
+  `;
+  return tr;
+}
+
+function prependRow(evt) {
+  emptyState.style.display = 'none';
+  const tr = buildRow(evt);
+  feedTbody.insertBefore(tr, feedTbody.firstChild);
+
+  // Trim excess rows
+  while (feedTbody.rows.length > MAX_ROWS) {
+    feedTbody.deleteRow(feedTbody.rows.length - 1);
+  }
+
+  totalReceived++;
+  totalRecEl.textContent = totalReceived;
+  feedCount.textContent = feedTbody.rows.length + ' events';
+}
+
+function populateTable(events) {
+  feedTbody.innerHTML = '';
+  if (!events || events.length === 0) {
+    emptyState.style.display = '';
+    feedCount.textContent = '0 events';
+    return;
+  }
+  emptyState.style.display = 'none';
+  // events are oldest-first; we want newest first
+  [...events].reverse().forEach(evt => {
+    feedTbody.appendChild(buildRow(evt));
+  });
+  feedCount.textContent = feedTbody.rows.length + ' events';
+}
+
+/* ── Summary recalculation from incoming detection ─────────────────────────── */
+const activePeople = new Map(); // id → last event
+
+function ingestDetection(evt) {
+  activePeople.set(evt.person_id, evt);
+
+  summary.total_persons_tracked = activePeople.size;
+  const stationary = [...activePeople.values()].filter(p => p.stationary);
+  summary.stationary_count = stationary.length;
+  summary.stationary_ids   = stationary.map(p => p.person_id);
+
+  const dists = [...activePeople.values()].map(p => p.distance_m);
+  summary.closest_person_m = dists.length ? Math.min(...dists) : null;
+  summary.last_event_ts    = evt.timestamp;
+
+  updateCards();
+  prependRow(evt);
+}
+
+function applySnapshot(data) {
+  activePeople.clear();
+  (data.active_persons || []).forEach(p => activePeople.set(p.person_id, p));
+
+  summary.total_persons_tracked = activePeople.size;
+  const stationary = [...activePeople.values()].filter(p => p.stationary);
+  summary.stationary_count = stationary.length;
+  summary.stationary_ids   = stationary.map(p => p.person_id);
+  const dists = [...activePeople.values()].map(p => p.distance_m);
+  summary.closest_person_m = dists.length ? Math.min(...dists) : null;
+  if (data.recent_events && data.recent_events.length)
+    summary.last_event_ts = data.recent_events[data.recent_events.length - 1].timestamp;
+
+  updateCards();
+  populateTable(data.recent_events || []);
+}
+
+/* ── WebSocket ─────────────────────────────────────────────────────────────── */
+function setWsStatus(online) {
+  if (online) {
+    wsDot.classList.add('online');
+    wsLabel.textContent = 'LIVE';
+    wsLabel.style.color = 'var(--green)';
+  } else {
+    wsDot.classList.remove('online');
+    wsLabel.textContent = 'DISCONNECTED';
+    wsLabel.style.color = 'var(--red)';
+  }
+}
+
+function connect() {
+  if (ws) { try { ws.close(); } catch(_) {} }
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setWsStatus(true);
+    clearTimeout(reconnectTmr);
+  };
+
+  ws.onmessage = e => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    if (msg.type === 'snapshot') {
+      applySnapshot(msg.data);
+    } else if (msg.type === 'detection') {
+      ingestDetection(msg.data);
+    }
+  };
+
+  ws.onerror = () => {};
+
+  ws.onclose = () => {
+    setWsStatus(false);
+    reconnectTmr = setTimeout(connect, 3000);
+  };
+}
+
+/* ── Initial fetch (fallback if WS snapshot not received) ──────────────────── */
+async function fetchInitial() {
+  try {
+    const [sumRes, latRes] = await Promise.all([
+      fetch(`${BASE}/detections/summary`),
+      fetch(`${BASE}/detections/latest?n=50`),
+    ]);
+    if (sumRes.ok) {
+      const s = await sumRes.json();
+      Object.assign(summary, s);
+      updateCards();
+    }
+    if (latRes.ok) {
+      const l = await latRes.json();
+      populateTable(l.events || []);
+    }
+  } catch (_) {}
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+$('btn-reset').addEventListener('click', async () => {
+  try { await fetch(`${BASE}/detections/reset`, { method: 'DELETE' }); } catch(_) {}
+  activePeople.clear();
+  Object.assign(summary, {
+    total_persons_tracked: 0,
+    stationary_count: 0,
+    stationary_ids: [],
+    closest_person_m: null,
+    last_event_ts: null,
+  });
+  totalReceived = 0;
+  totalRecEl.textContent = '0';
+  updateCards();
+  feedTbody.innerHTML = '';
+  feedCount.textContent = '0 events';
+  emptyState.style.display = '';
+});
+
+/* ── Mission ID (random per session) ─────────────────────────────────────────── */
+missionId.textContent = 'SRX-' + Math.random().toString(36).slice(2,6).toUpperCase();
+
+/* ── Boot ──────────────────────────────────────────────────────────────────── */
+fetchInitial();
+connect();
+</script>
+</body>
+</html>
