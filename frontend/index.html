@@ -717,6 +717,7 @@ function updateCards() {
 
 function buildRow(evt) {
   const tr = document.createElement('tr');
+  tr.dataset.personId = evt.person_id;
   if (evt.stationary) tr.classList.add('stationary-row');
 
   const confPct = Math.round((evt.confidence || 0) * 100);
@@ -749,19 +750,16 @@ function buildRow(evt) {
   return tr;
 }
 
-function prependRow(evt) {
+function upsertRow(evt) {
   emptyState.style.display = 'none';
+  const existing = feedTbody.querySelector(`tr[data-person-id="${evt.person_id}"]`);
   const tr = buildRow(evt);
-  feedTbody.insertBefore(tr, feedTbody.firstChild);
-
-  // Trim excess rows
-  while (feedTbody.rows.length > MAX_ROWS) {
-    feedTbody.deleteRow(feedTbody.rows.length - 1);
+  if (existing) {
+    existing.replaceWith(tr);
+  } else {
+    feedTbody.insertBefore(tr, feedTbody.firstChild);
   }
-
-  totalReceived++;
-  totalRecEl.textContent = totalReceived;
-  feedCount.textContent = feedTbody.rows.length + ' events';
+  feedCount.textContent = feedTbody.rows.length + ' persons';
 }
 
 function populateTable(events) {
@@ -795,7 +793,7 @@ function ingestDetection(evt) {
   summary.last_event_ts    = evt.timestamp;
 
   updateCards();
-  prependRow(evt);
+  upsertRow(evt);
   upsertMarker(evt);
 }
 

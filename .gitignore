@@ -30,3 +30,5 @@ datasets/
 # DepthAI cache e crash dumps
 .cache/
 .claude/
+
+spatial-detections/recs/

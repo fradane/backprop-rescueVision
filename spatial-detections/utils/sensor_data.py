@@ -2,11 +2,16 @@ import math
 
 
 # PLACEHOLDER — in produzione questi valori arrivano da GPS e IMU reali
-DRONE_LAT = 44.4056  # latitudine drone (placeholder: Genova)
-DRONE_LON = 8.9463   # longitudine drone (placeholder: Genova)
+DRONE_LAT = 45.43679089996422
+DRONE_LON = 9.165574500441567
 DRONE_ALT = 50.0     # altitudine drone in metri (placeholder)
 DRONE_HEADING = 180.0  # direzione camera in gradi (180 = Sud)
 CAMERA_TILT = 45.0   # inclinazione camera verso il basso in gradi
+
+# Fattore di scala per demo indoor: amplifica le distanze reali (1-5m in stanza)
+# in modo che le persone appaiano separate sulla mappa (~50-200m di distanza visiva).
+# In produzione con drone outdoor impostare a 1.0.
+DEMO_SCALE = 20.0
 
 
 def get_sensor_data() -> dict:
@@ -47,8 +52,8 @@ def compute_absolute_coordinates(
     delta_east  = ground_dist * math.sin(heading_rad) + x_m * math.sin(heading_rad + math.pi / 2)
 
     # converti metri in gradi (approssimazione piatta valida per piccole distanze)
-    delta_lat = delta_north / 111320.0
-    delta_lon = delta_east / (111320.0 * math.cos(math.radians(sensor["lat"])))
+    delta_lat = delta_north * DEMO_SCALE / 111320.0
+    delta_lon = delta_east  * DEMO_SCALE / (111320.0 * math.cos(math.radians(sensor["lat"])))
 
     abs_lat = sensor["lat"] + delta_lat
     abs_lon = sensor["lon"] + delta_lon

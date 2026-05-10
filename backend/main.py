@@ -81,7 +81,8 @@ async def receive_detection(det: Detection):
 
 @app.get("/detections/latest")
 async def get_latest(n: int = 50):
-    return {"count": len(detections_store), "events": detections_store[-n:]}
+    persons = sorted(active_persons.values(), key=lambda e: e["timestamp"], reverse=True)
+    return {"count": len(persons), "events": persons[:n]}
 
 
 @app.get("/detections/summary")
@@ -118,7 +119,7 @@ async def websocket_endpoint(ws: WebSocket):
         snapshot = {
             "type": "snapshot",
             "data": {
-                "recent_events":  detections_store[-20:],
+                "recent_events":  sorted(active_persons.values(), key=lambda e: e["timestamp"], reverse=True),
                 "active_persons": list(active_persons.values()),
             },
         }

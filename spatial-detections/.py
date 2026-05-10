@@ -3,7 +3,6 @@ from depthai_nodes.node import ApplyColormap as ApplyDepthColormap, FrameCropper
 
 from utils.arguments import initialize_argparser
 from utils.annotation_node import AnnotationNode
-from utils.video_recorder import VideoRecorder
 
 _, args = initialize_argparser()
 
@@ -98,19 +97,10 @@ with dai.Pipeline(device) as pipeline:
 
     # annotation
     annotation_node = pipeline.create(AnnotationNode).build(
-        input_gathered=gather.out,
-        depth=stereo.depth,
-        passthrough=nn.passthrough,
-        labels=classes,
+        input_gathered=gather.out, depth=stereo.depth, labels=classes
     )
 
     apply_colormap = pipeline.create(ApplyDepthColormap).build(stereo.depth)
-
-    # video recording to disk (frame RGB con box annotati)
-    recorder = pipeline.create(VideoRecorder).build(
-        input_frame=annotation_node.out_annotated_frame,
-        fps=args.fps_limit,
-    )
 
     # video encoding
     cam_nv12 = cam.requestOutput(
