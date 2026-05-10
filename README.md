@@ -1,59 +1,98 @@
-# Search & Rescue Vision
+# Drone SAR — Search & Rescue Vision
 
-An AI-powered person detection system that runs entirely on a **Luxonis OAK 4 D camera**. The camera autonomously identifies and localizes people in dangerous, low-visibility environments — smoke-filled rooms, dark buildings, debris-cluttered spaces — without streaming any frames to an external computer.
+An AI-powered system that detects and localizes people in danger using a drone-mounted **Luxonis OAK 4 D** camera. All inference runs on-device: no cloud, no latency.
 
-## The Problem
+**Hardware:** OAK 4 D (stereo depth + RGB + 48 TOPS on-device AI, 8 GB RAM), mounted on a drone. The host laptop only displays results — all processing happens on the camera.
 
-A firefighter or rescue operator entering a dangerous building has limited visibility and can easily miss a survivor. A camera mounted on their equipment that detects people and reports their exact 3D position — even through smoke, in the dark, or partially hidden behind obstacles — can directly save lives.
+---
 
-## How It Works
+## Idea
 
-The full pipeline runs on-device:
+During disasters like floods, earthquakes, or wildfires, locating survivors quickly is critical. A drone equipped with a depth-sensing AI camera can autonomously scan large areas, detect people, estimate their real-world distance, identify if they are stationary (possibly injured or unconscious), and stream alerts to a rescue dashboard — without requiring a human operator to watch every frame.
+
+---
+
+## Implementation
+
+The full pipeline runs on the OAK 4 D:
 
 ```
-ColorCamera node       → captures RGB frame
-MonoCamera nodes (×2)  → left + right grayscale for stereo depth
-StereoDepth node       → computes the depth map
-NeuralNetwork node     → runs the model → bounding boxes + confidence scores
-ObjectTracker node     → assigns stable IDs across frames
-Sync / Script node     → aligns depth to each detection → real-world distance
+ColorCamera (RGB)          → person detection + re-ID
+MonoCameras (left + right) → stereo depth map
+StereoDepth node           → metric distance per detection
+SpatialDetectionNetwork    → bounding box + XYZ coordinates
+ObjectTracker              → stable person IDs across frames
+AnnotationNode             → stillness detection (fallen / stationary)
+VideoRecorder              → saves annotated footage to disk
+FastAPI backend            → REST + WebSocket events to the dashboard
 ```
 
-Each detected person gets a bounding box, a distance in meters, a stable track ID, and a flag if they have been stationary for more than N seconds (possibly incapacitated).
+Each tracked person gets: a bounding box, a distance in meters, a stable ID, a `stationary` flag (if motionless for N seconds), and optionally a fall-detection label.
 
-## The Model
+### Models
 
-- **Base:** YOLOv8 nano (Ultralytics), fine-tuned from pretrained weights
-- **Dataset:** person detection images from Roboflow Universe
-- **Augmentations** (via Albumentations) simulate real rescue conditions:
-  - `RandomBrightnessContrast` — dark rooms
-  - `RandomFog` — smoke and haze
-  - `GaussianBlur` — camera shake
-  - `CoarseDropout` — debris partially blocking people
-  - `ToGray` — near-IR lighting simulation
-- **Training:** 30–50 epochs on Google Colab
-- **Deployment format:** converted from `.pt` → `.onnx` → RVC4-compatible model, packaged as an OAK App and deployed via `oakctl`
+Two YOLOv8n models were trained on Google Colab and exported to RVC4 format:
 
-## Hardware
+| Model | Task | Dataset |
+|---|---|---|
+| `best.rvc4.tar.xz` | Person detection | Roboflow Universe |
+| `best_fall_detection_model.rvc4.tar.xz` | Fall / lying-down detection | Roboflow fall-detection dataset |
 
-| Component | Role |
-|---|---|
-| OAK 4 D Camera | Stereo depth + color camera + on-device AI (48 TOPS INT8, 8GB RAM) |
-| PoE+ Switch | Powers the camera through the Ethernet cable |
-| ETH cable | Camera → switch → laptop |
+Training augmentations (Albumentations) simulate aerial and disaster conditions:
+- `RandomBrightnessContrast` — backlighting, shadows
+- `RandomFog` — smoke, haze, water spray
+- `GaussianBlur` — camera vibration from drone motors
+- `CoarseDropout` — partial occlusion (debris, foliage)
+- `GaussNoise` — low-light sensor noise
 
-The laptop only displays results. All inference, depth computation, and tracking happen on the camera itself.
+Re-identification uses **OSNet** (from the Luxonis model zoo) to assign consistent IDs across drone passes.
 
-## Stack
+---
 
-- [DepthAI v3 SDK](https://docs.luxonis.com/software-v3/depthai/) — on-device pipeline
-- [Ultralytics YOLOv8](https://docs.ultralytics.com/) — model training and export
-- [Albumentations](https://albumentations.ai/) — training augmentations
-- [OAK Apps + oakctl](https://docs.luxonis.com/software-v3/oak-apps/) — on-device deployment
-- [Google Colab](https://colab.research.google.com/) — GPU training environment
+## Running the Camera Code
 
-## Key Links
+### Requirements
 
-- [OAK4 Getting Started](https://docs.luxonis.com/hardware/platform/deploy/oak4-deployment-guide/oak4-getting-started/)
-- [DepthAI Examples](https://docs.luxonis.com/software-v3/depthai/examples/)
-- [Roboflow Universe](https://universe.roboflow.com/)
+- Python >= 3.10
+- Luxonis OAK 4 D connected (USB or PoE)
+- [`oakctl`](https://docs.luxonis.com/software-v3/oak-apps/oakctl) installed for standalone mode
+
+### Install dependencies
+
+```bash
+cd spatial-detections
+pip install -r requirements.txt
+```
+
+### Peripheral mode (host + camera)
+
+```bash
+python3 main.py
+```
+
+Open `http://localhost:8082` in your browser to see the live view with detections and depth overlay.
+
+Optional flags:
+```
+--device <IP or device ID>   Connect to a specific OAK device
+--fps_limit <N>              Cap frame rate (default: 30 on RVC4)
+```
+
+### Standalone mode (runs entirely on the OAK 4 D)
+
+```bash
+oakctl connect <DEVICE_IP>
+oakctl app run .
+```
+
+The app bundles and deploys itself to the camera — no host needed during flight.
+
+### Backend (dashboard API)
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+API available at `http://localhost:8000`. WebSocket stream at `ws://localhost:8000/ws`.
