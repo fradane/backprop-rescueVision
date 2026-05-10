@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   /* ── Reset & Variables ─────────────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -63,11 +65,18 @@
   /* ── Layout ─────────────────────────────────────────────────────────────── */
   #app {
     position: relative; z-index: 1;
-    display: grid;
-    grid-template-rows: 56px auto auto 1fr;
+    display: flex;
+    flex-direction: column;
     height: 100vh;
     padding: 0;
     gap: 0;
+  }
+
+  #dashboard-page.active {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    flex: 1;
+    overflow: hidden;
   }
 
   /* ── Top Bar ─────────────────────────────────────────────────────────────── */
@@ -430,6 +439,82 @@
   .corner-tr { top: 8px; right: 8px; border-top: 1px solid var(--accent); border-right: 1px solid var(--accent); opacity: 0.3; }
   .corner-bl { bottom: 8px; left: 8px;  border-bottom: 1px solid var(--accent); border-left:  1px solid var(--accent); opacity: 0.3; }
   .corner-br { bottom: 8px; right: 8px; border-bottom: 1px solid var(--accent); border-right: 1px solid var(--accent); opacity: 0.3; }
+
+  /* ── Tab nav ─────────────────────────────────────────────────────────────── */
+  #tab-nav {
+    display: flex; align-items: center; gap: 0;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 28px;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ── Pages ───────────────────────────────────────────────────────────────── */
+  .page { display: none; flex: 1; overflow: hidden; }
+  .page.active { display: flex; flex-direction: column; }
+
+  /* ── Map page ────────────────────────────────────────────────────────────── */
+  #map-page {
+    position: relative;
+    flex: 1;
+  }
+  #map {
+    width: 100%; height: 100%;
+    background: #050a0e;
+  }
+  /* dark filter on leaflet tiles */
+  .leaflet-tile { filter: invert(1) hue-rotate(200deg) brightness(0.7) saturate(0.8); }
+  .leaflet-container { background: #050a0e; }
+
+  #map-legend {
+    position: absolute; bottom: 24px; right: 16px; z-index: 1000;
+    background: rgba(5,10,14,0.88);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    backdrop-filter: blur(4px);
+  }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .legend-row:last-child { margin-bottom: 0; }
+  .legend-dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  }
+  .legend-dot.red   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+  .legend-dot.green { background: var(--green);  box-shadow: 0 0 8px var(--green); }
+
+  #map-stat-count {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 1000;
+    background: rgba(5,10,14,0.88);
+    border: 1px solid var(--border);
+    padding: 6px 20px;
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    backdrop-filter: blur(4px);
+  }
 </style>
 </head>
 <body>
@@ -458,64 +543,85 @@
     <button id="btn-reset">&#9632; Reset Demo</button>
   </header>
 
-  <!-- SUMMARY CARDS -->
-  <div id="cards">
-    <div class="card">
-      <div class="card-label">Persons Tracked</div>
-      <div class="card-value" id="val-total">—</div>
-      <div class="card-unit">active targets</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Stationary</div>
-      <div class="card-value" id="val-stationary">—</div>
-      <div class="card-unit">possible injury</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Closest Person</div>
-      <div class="card-value" id="val-closest">—</div>
-      <div class="card-unit" id="unit-closest">meters</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Last Detection</div>
-      <div class="card-value" id="val-lastts" style="font-size:14px; padding-top:8px; letter-spacing:0.04em">——:——:——</div>
-      <div class="card-unit">UTC</div>
-    </div>
-  </div>
+  <!-- TAB NAV -->
+  <nav id="tab-nav">
+    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn" data-tab="map">&#9671; Map</button>
+  </nav>
 
-  <!-- ALERT BANNER -->
-  <div id="alert-banner">
-    <span class="alert-icon">⚠</span>
-    <span id="alert-text">STATIONARY PERSON DETECTED — POSSIBLE FALL OR INJURY</span>
-    <span class="alert-ids" id="alert-ids"></span>
-  </div>
+  <!-- DASHBOARD PAGE -->
+  <div id="dashboard-page" class="page active">
 
-  <!-- LIVE FEED -->
-  <section id="feed-section">
-    <div id="feed-header">
-      <span class="feed-title">Live Detection Feed</span>
-      <span class="feed-count" id="feed-count">0 events</span>
-      <span id="event-counter">TOTAL RECEIVED: <b id="total-received">0</b></span>
-    </div>
-
-    <div class="table-wrap">
-      <table id="feed-table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Distance</th>
-            <th>Confidence</th>
-            <th>Status</th>
-            <th>Timestamp</th>
-          </tr>
-        </thead>
-        <tbody id="feed-tbody"></tbody>
-      </table>
-      <div id="empty-state">
-        <div class="empty-icon">◎</div>
-        <div class="empty-label">Awaiting detections…</div>
+    <!-- SUMMARY CARDS -->
+    <div id="cards">
+      <div class="card">
+        <div class="card-label">Persons Tracked</div>
+        <div class="card-value" id="val-total">—</div>
+        <div class="card-unit">active targets</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Stationary</div>
+        <div class="card-value" id="val-stationary">—</div>
+        <div class="card-unit">possible injury</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Closest Person</div>
+        <div class="card-value" id="val-closest">—</div>
+        <div class="card-unit" id="unit-closest">meters</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Last Detection</div>
+        <div class="card-value" id="val-lastts" style="font-size:14px; padding-top:8px; letter-spacing:0.04em">——:——:——</div>
+        <div class="card-unit">UTC</div>
       </div>
     </div>
-  </section>
+
+    <!-- ALERT BANNER -->
+    <div id="alert-banner">
+      <span class="alert-icon">⚠</span>
+      <span id="alert-text">STATIONARY PERSON DETECTED — POSSIBLE FALL OR INJURY</span>
+      <span class="alert-ids" id="alert-ids"></span>
+    </div>
+
+    <!-- LIVE FEED -->
+    <section id="feed-section">
+      <div id="feed-header">
+        <span class="feed-title">Live Detection Feed</span>
+        <span class="feed-count" id="feed-count">0 events</span>
+        <span id="event-counter">TOTAL RECEIVED: <b id="total-received">0</b></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="feed-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Distance</th>
+              <th>Confidence</th>
+              <th>Status</th>
+              <th>Time / Coords</th>
+            </tr>
+          </thead>
+          <tbody id="feed-tbody"></tbody>
+        </table>
+        <div id="empty-state">
+          <div class="empty-icon">◎</div>
+          <div class="empty-label">Awaiting detections…</div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- #dashboard-page -->
+
+  <!-- MAP PAGE -->
+  <div id="map-page" class="page">
+    <div id="map-stat-count">TARGETS ON MAP: <b id="map-target-count">0</b></div>
+    <div id="map"></div>
+    <div id="map-legend">
+      <div class="legend-row"><div class="legend-dot red"></div> Stationary / Fallen</div>
+      <div class="legend-row"><div class="legend-dot green"></div> Moving</div>
+    </div>
+  </div><!-- #map-page -->
 
 </div><!-- #app -->
 
@@ -616,6 +722,16 @@ function buildRow(evt) {
   const confPct = Math.round((evt.confidence || 0) * 100);
   const confColor = confPct >= 80 ? 'var(--green)' : confPct >= 50 ? 'var(--amber)' : 'var(--red)';
 
+  const statusBadge = evt.stationary
+    ? (evt.is_fallen
+        ? '<span class="badge badge-stationary">Fallen+Still</span>'
+        : '<span class="badge badge-stationary">Stationary</span>')
+    : (evt.is_fallen
+        ? '<span class="badge badge-stationary" style="background:rgba(204,0,204,0.18);color:#cc00cc;border-color:rgba(204,0,204,0.4)">Fallen</span>'
+        : '<span class="badge badge-moving">Moving</span>');
+  const coords = (evt.lat != null && evt.lon != null)
+    ? `${evt.lat.toFixed(5)},${evt.lon.toFixed(5)}`
+    : '—';
   tr.innerHTML = `
     <td><span class="cell-id">#${String(evt.person_id).padStart(3,'0')}</span></td>
     <td><span class="cell-dist">${evt.distance_m.toFixed(2)}</span> <span class="cell-dist-unit">m</span></td>
@@ -627,10 +743,8 @@ function buildRow(evt) {
         <span class="conf-val">${confPct}%</span>
       </div>
     </td>
-    <td>${evt.stationary
-      ? '<span class="badge badge-stationary">Stationary</span>'
-      : '<span class="badge badge-moving">Moving</span>'}</td>
-    <td class="cell-time">${fmtTime(evt.timestamp)}</td>
+    <td>${statusBadge}</td>
+    <td class="cell-time" style="font-size:10px">${fmtTime(evt.timestamp)}<br><span style="color:var(--text-muted)">${coords}</span></td>
   `;
   return tr;
 }
@@ -682,6 +796,7 @@ function ingestDetection(evt) {
 
   updateCards();
   prependRow(evt);
+  upsertMarker(evt);
 }
 
 function applySnapshot(data) {
@@ -699,6 +814,7 @@ function applySnapshot(data) {
 
   updateCards();
   populateTable(data.recent_events || []);
+  activePeople.forEach(evt => upsertMarker(evt));
 }
 
 /* ── WebSocket ─────────────────────────────────────────────────────────────── */
@@ -778,7 +894,94 @@ $('btn-reset').addEventListener('click', async () => {
   feedTbody.innerHTML = '';
   feedCount.textContent = '0 events';
   emptyState.style.display = '';
+  clearMapMarkers();
 });
+
+/* ── Tab navigation ─────────────────────────────────────────────────────────── */
+let mapInitialized = false;
+let leafletMap = null;
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const target = btn.dataset.tab;
+    $(`${target}-page`).classList.add('active');
+    if (target === 'map' && !mapInitialized) {
+      initMap();
+    } else if (target === 'map') {
+      leafletMap.invalidateSize();
+    }
+  });
+});
+
+/* ── Map ────────────────────────────────────────────────────────────────────── */
+// person_id -> { marker, stationary }
+const mapMarkers = new Map();
+
+function makeIcon(stationary, isFallen) {
+  const color = (stationary || isFallen) ? '#ff3d3d' : '#00e5a0';
+  const glow  = (stationary || isFallen) ? 'rgba(255,61,61,0.5)' : 'rgba(0,229,160,0.4)';
+  const pulse = (stationary || isFallen)
+    ? `@keyframes ping-anim { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.6);opacity:0} }`
+    : '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+    <defs>
+      <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <circle cx="14" cy="12" r="10" fill="${color}" filter="url(#glow)" opacity="0.25"/>
+    <circle cx="14" cy="12" r="6"  fill="${color}" filter="url(#glow)"/>
+    <line x1="14" y1="22" x2="14" y2="34" stroke="${color}" stroke-width="2"/>
+  </svg>`;
+  return L.divIcon({
+    html: svg,
+    className: '',
+    iconSize: [28, 36],
+    iconAnchor: [14, 34],
+    popupAnchor: [0, -36],
+  });
+}
+
+function initMap() {
+  mapInitialized = true;
+  leafletMap = L.map('map', { zoomControl: true, attributionControl: false }).setView([44.4056, 8.9463], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap);
+  // re-draw markers from current activePeople
+  activePeople.forEach((evt, id) => upsertMarker(evt));
+}
+
+function upsertMarker(evt) {
+  if (evt.lat == null || evt.lon == null) return;
+  const id = evt.person_id;
+  const isRed = evt.stationary || evt.is_fallen;
+  const label = `#${String(id).padStart(3,'0')} — ${evt.stationary ? 'FERMO' : 'IN MOTO'}${evt.is_fallen ? ' / CADUTO' : ''}<br>${evt.lat?.toFixed(5)}, ${evt.lon?.toFixed(5)}<br>${evt.distance_m?.toFixed(2)} m`;
+
+  if (mapMarkers.has(id)) {
+    const m = mapMarkers.get(id);
+    m.marker.setLatLng([evt.lat, evt.lon]);
+    m.marker.setIcon(makeIcon(evt.stationary, evt.is_fallen));
+    m.marker.getPopup()?.setContent(label);
+  } else {
+    if (!leafletMap) return;
+    const marker = L.marker([evt.lat, evt.lon], { icon: makeIcon(evt.stationary, evt.is_fallen) })
+      .addTo(leafletMap)
+      .bindPopup(label);
+    mapMarkers.set(id, { marker });
+  }
+  $('map-target-count').textContent = mapMarkers.size;
+}
+
+function clearMapMarkers() {
+  if (leafletMap) {
+    mapMarkers.forEach(({ marker }) => leafletMap.removeLayer(marker));
+  }
+  mapMarkers.clear();
+  const el = $('map-target-count');
+  if (el) el.textContent = '0';
+}
 
 /* ── Mission ID (random per session) ─────────────────────────────────────────── */
 missionId.textContent = 'SRX-' + Math.random().toString(36).slice(2,6).toUpperCase();

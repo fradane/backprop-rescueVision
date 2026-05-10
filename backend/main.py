@@ -22,7 +22,11 @@ class Detection(BaseModel):
     confidence: float
     bbox:       list[float]
     stationary: bool
-    timestamp:  Optional[str] = None
+    lat:        Optional[float] = None
+    lon:        Optional[float] = None
+    is_fallen:  Optional[bool]  = False
+    still_secs: Optional[float] = 0.0
+    timestamp:  Optional[str]   = None
 
 # ── In-Memory Store ──────────────────────────────────────────────────────────
 
@@ -89,6 +93,10 @@ async def get_summary():
         "total_persons_tracked": len(persons),
         "stationary_count":      len(stationary),
         "stationary_ids":        [p["person_id"] for p in stationary],
+        "stationary_locations":  [
+            {"person_id": p["person_id"], "lat": p.get("lat"), "lon": p.get("lon")}
+            for p in stationary if p.get("lat") is not None
+        ],
         "closest_person_m":      min(distances) if distances else None,
         "farthest_person_m":     max(distances) if distances else None,
         "last_event_ts":         detections_store[-1]["timestamp"] if detections_store else None,

@@ -4,11 +4,18 @@ from depthai_nodes import PRIMARY_COLOR, TRANSPARENT_PRIMARY_COLOR
 from depthai_nodes.utils import AnnotationHelper
 from typing import List
 import cv2
+import threading
+import requests
 from utils.stillness import check_stillness, cleanup_tracks, resolve_track_id
 
 # Placeholder — in produzione da GPS/IMU reali
 GPS_LAT = 44.4056
 GPS_LON = 8.9463
+
+BACKEND_URL = "http://localhost:8000/detections"
+
+# track_id -> last state sent: {"stationary": bool, "is_fallen": bool}
+_sent_states: dict[str, dict] = {}
 
 # aspect ratio width/height sopra cui la persona è considerata caduta
 FALL_ASPECT_RATIO = 1.3
@@ -25,6 +32,20 @@ CSIM_THRESHOLD = 0.8
 
 def _cos_sim(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+
+
+def _send_detection(payload: dict) -> None:
+    try:
+        requests.post(BACKEND_URL, json=payload, timeout=2)
+    except Exception:
+        pass
+
+
+def _should_send(track_id: str, stationary: bool, is_fallen: bool) -> bool:
+    prev = _sent_states.get(track_id)
+    if prev is None:
+        return True
+    return prev["stationary"] != stationary or prev["is_fallen"] != is_fallen
 
 
 def _assign_id(embedding: np.ndarray) -> str:
@@ -142,6 +163,22 @@ class AnnotationNode(dai.node.HostNode):
                 size=12,
                 color=box_color,
             )
+
+            # send to backend only on state change (no flood)
+            if _should_send(track_id, is_still, is_fallen):
+                _sent_states[track_id] = {"stationary": is_still, "is_fallen": is_fallen}
+                payload = {
+                    "person_id":  int(track_id) if track_id.isdigit() else hash(track_id) % 10000,
+                    "distance_m": round(z / 1000, 3),
+                    "confidence": round(float(detection.confidence), 3),
+                    "bbox":       [round(xmin, 4), round(ymin, 4), round(xmax, 4), round(ymax, 4)],
+                    "stationary": is_still,
+                    "lat":        GPS_LAT,
+                    "lon":        GPS_LON,
+                    "is_fallen":  is_fallen,
+                    "still_secs": round(still_secs, 1),
+                }
+                threading.Thread(target=_send_detection, args=(payload,), daemon=True).start()
 
         cleanup_tracks(active_ids)
 
